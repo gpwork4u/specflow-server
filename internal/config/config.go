@@ -14,6 +14,7 @@ const (
 	GolangAgentQueue   = "golang-agent-queue"
 	NestJSAgentQueue   = "nestjs-agent-queue"
 	FrontendAgentQueue = "frontend-agent-queue"
+	UIDesignerQueue    = "ui-designer-queue"
 	QAAgentQueue       = "qa-agent-queue"
 	VerifierQueue      = "verifier-queue"
 )

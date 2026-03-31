@@ -5,10 +5,11 @@ package activities
 type AgentType string
 
 const (
-	AgentGolang   AgentType = "golang"
-	AgentNestJS   AgentType = "nestjs"
-	AgentFrontend AgentType = "frontend"
-	AgentQA       AgentType = "qa"
+	AgentGolang     AgentType = "golang"
+	AgentNestJS     AgentType = "nestjs"
+	AgentFrontend   AgentType = "frontend"
+	AgentUIDesigner AgentType = "ui-designer"
+	AgentQA         AgentType = "qa"
 )
 
 // SpecWriterInput is the input for the spec writer activity.
@@ -57,6 +58,7 @@ type EngineerInput struct {
 	TaskDescription string `json:"taskDescription"`
 	Specs           string `json:"specs"`
 	Plan            string `json:"plan"`
+	DesignSystem    string `json:"designSystem,omitempty"` // Design system doc (for frontend tasks)
 }
 
 type EngineerOutput struct {
@@ -87,6 +89,44 @@ type QAOutput struct {
 type BugDef struct {
 	Severity    string `json:"severity"` // critical, major, minor
 	Description string `json:"description"`
+}
+
+// UIDesignerInput is the input for the UI designer activity.
+type UIDesignerInput struct {
+	Repo       string `json:"repo"`
+	BaseBranch string `json:"baseBranch"`
+	Specs      string `json:"specs"`
+	Plan       string `json:"plan"`
+}
+
+// UIDesignerOutput contains the design system definition.
+type UIDesignerOutput struct {
+	DesignSystem string          `json:"designSystem"` // Full design system document
+	ColorPalette []ColorToken    `json:"colorPalette"`
+	Typography   []TypoToken     `json:"typography"`
+	Components   []ComponentSpec `json:"components"`
+	Summary      string          `json:"summary"`
+}
+
+type ColorToken struct {
+	Name  string `json:"name"`  // e.g. "primary", "error", "surface"
+	Light string `json:"light"` // hex value for light mode
+	Dark  string `json:"dark"`  // hex value for dark mode
+}
+
+type TypoToken struct {
+	Name       string `json:"name"`       // e.g. "h1", "body", "caption"
+	FontFamily string `json:"fontFamily"`
+	FontSize   string `json:"fontSize"`
+	FontWeight string `json:"fontWeight"`
+	LineHeight string `json:"lineHeight"`
+}
+
+type ComponentSpec struct {
+	Name        string `json:"name"`        // e.g. "Button", "Card", "Input"
+	Description string `json:"description"`
+	Variants    string `json:"variants"`    // e.g. "primary, secondary, ghost, danger"
+	Props       string `json:"props"`       // key props description
 }
 
 // BugFixInput is the input for the bug fix activity.

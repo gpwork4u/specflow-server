@@ -133,6 +133,30 @@ services:
   # 需要掛載 Docker socket 才能建立 sandbox containers
   # ============================================
 
+  # ============================================
+  # UI Designer Agent
+  # 定義 design system (色彩、字型、元件庫) 給前端用
+  # ============================================
+
+  ui-designer-agent:
+    build:
+      context: .
+      dockerfile: docker/ui-designer-agent/Dockerfile
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TASK_QUEUE=ui-designer-queue
+      - LLM_BASE_URL=http://ollama:11434/v1
+      - LLM_API_KEY=ollama
+      - LLM_MODEL=${LLM_MODEL:-qwen2.5-coder:32b}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - temporal
+      - ollama
+    networks:
+      - specflow
+
   golang-agent:
     build:
       context: .

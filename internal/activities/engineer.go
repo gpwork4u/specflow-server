@@ -87,6 +87,15 @@ func (a *EngineerActivities) systemPrompt() string {
 - shell "cd /workspace/repo && pnpm run lint" 確認 lint
 - 元件用 functional component + hooks
 - 遵循 accessibility (a11y) 最佳實踐
+
+## 設計系統
+如果任務輸入中包含 Design System，你必須：
+- 使用 design-system/tokens.css 中定義的 CSS Custom Properties
+- 遵循 design-system/components.md 中的元件規格
+- 使用指定的色彩、字型、間距 token
+- 不要自行定義新的色彩或字型，使用設計系統中的 token
+- 如果需要新的 token，在 tokens.css 中擴充，保持一致性
+- 所有 UI 元件必須使用設計系統定義的全域元件庫
 `
 	}
 	return base
@@ -128,6 +137,11 @@ func (a *EngineerActivities) Implement(ctx context.Context, input EngineerInput)
 	reg.ApplyTo(agent)
 
 	// 4. Run the agent
+	designSection := ""
+	if input.DesignSystem != "" {
+		designSection = fmt.Sprintf("\n## 設計系統 (必須遵循)\n%s\n", input.DesignSystem)
+	}
+
 	prompt := fmt.Sprintf(`## 任務
 Task ID: %s
 %s
@@ -137,7 +151,7 @@ Task ID: %s
 
 ## 技術計畫
 %s
-
+%s
 ## 目標 Repo: %s (branch: %s)
 
 請開始實作。完成後回報：
@@ -145,7 +159,7 @@ Task ID: %s
 2. PR URL
 3. 修改的檔案清單
 4. 簡要摘要`,
-		input.TaskID, input.TaskDescription, input.Specs, input.Plan, input.Repo, input.BaseBranch)
+		input.TaskID, input.TaskDescription, input.Specs, input.Plan, designSection, input.Repo, input.BaseBranch)
 
 	result, err := agent.Run(ctx, prompt)
 	if err != nil {

@@ -30,9 +30,10 @@ type SpecFlowInput struct {
 
 // SpecFlowOutput is the final result of the pipeline.
 type SpecFlowOutput struct {
-	Specs           string                      `json:"specs"`
-	Plan            string                      `json:"plan"`
-	Tasks           []activities.TaskDef         `json:"tasks"`
+	Specs           string                       `json:"specs"`
+	Plan            string                       `json:"plan"`
+	DesignSystem    *activities.UIDesignerOutput  `json:"designSystem,omitempty"`
+	Tasks           []activities.TaskDef          `json:"tasks"`
 	Waves           []activities.WaveDef         `json:"waves"`
 	EngineerResults []activities.EngineerOutput  `json:"engineerResults"`
 	QAResults       []activities.QAOutput        `json:"qaResults"`
@@ -144,6 +145,43 @@ func SpecFlowWorkflow(ctx workflow.Context, input SpecFlowInput) (*SpecFlowOutpu
 	status.TasksTotal = len(output.Tasks)
 
 	// ====================================================
+	// Phase 2.5: UI Designer (if frontend tasks exist)
+	// Produces design system before frontend implementation
+	// ====================================================
+	hasFrontendTasks := false
+	for _, t := range output.Tasks {
+		if t.AgentType == activities.AgentFrontend || t.AgentType == activities.AgentUIDesigner {
+			hasFrontendTasks = true
+			break
+		}
+	}
+
+	if startPhase <= 3 && hasFrontendTasks && output.DesignSystem == nil {
+		status.Phase = "design"
+		status.Message = "UI 設計系統定義中..."
+		logger.Info("Phase 2.5: UI Designer")
+
+		designCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+			TaskQueue:           config.UIDesignerQueue,
+			StartToCloseTimeout: 8 * time.Minute,
+			RetryPolicy:         retryPolicy,
+		})
+
+		var designResult activities.UIDesignerOutput
+		err := workflow.ExecuteActivity(designCtx, "Design", activities.UIDesignerInput{
+			Repo:       input.Repo,
+			BaseBranch: input.BaseBranch,
+			Specs:      output.Specs,
+			Plan:       output.Plan,
+		}).Get(ctx, &designResult)
+		if err != nil {
+			logger.Error("UI Designer failed, continuing without design system", "error", err)
+		} else {
+			output.DesignSystem = &designResult
+		}
+	}
+
+	// ====================================================
 	// Phase 3: Implementation (parallel by wave)
 	// ====================================================
 	if startPhase <= 3 {
@@ -176,14 +214,19 @@ func SpecFlowWorkflow(ctx workflow.Context, input SpecFlowInput) (*SpecFlowOutpu
 					RetryPolicy:         retryPolicy,
 				})
 
-				future := workflow.ExecuteActivity(engCtx, "Implement", activities.EngineerInput{
+				engInput := activities.EngineerInput{
 					Repo:            input.Repo,
 					BaseBranch:      input.BaseBranch,
 					TaskID:          task.ID,
 					TaskDescription: task.Description,
 					Specs:           output.Specs,
 					Plan:            output.Plan,
-				})
+				}
+				// Inject design system for frontend tasks
+				if task.AgentType == activities.AgentFrontend && output.DesignSystem != nil {
+					engInput.DesignSystem = output.DesignSystem.DesignSystem
+				}
+				future := workflow.ExecuteActivity(engCtx, "Implement", engInput)
 				futures = append(futures, future)
 			}
 
@@ -427,6 +470,8 @@ func agentTypeToQueue(agentType activities.AgentType) string {
 		return config.NestJSAgentQueue
 	case activities.AgentFrontend:
 		return config.FrontendAgentQueue
+	case activities.AgentUIDesigner:
+		return config.UIDesignerQueue
 	default:
 		return config.GolangAgentQueue
 	}
