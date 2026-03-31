@@ -100,11 +100,12 @@ func (a *EngineerActivities) Implement(ctx context.Context, input EngineerInput)
 	sb, err := sandbox.Create(ctx, sandbox.Config{
 		Image:   sandbox.AgentTypeToImage(string(a.AgentType)),
 		Name:    sandboxName,
-		Network: "specflow-n8n_specflow", // docker-compose network
+		Network: a.Cfg.DockerNetwork,
+		Memory:  a.Cfg.SandboxMemory,
+		CPUs:    a.Cfg.SandboxCPUs,
 		Env: map[string]string{
 			"GITHUB_TOKEN": a.Cfg.GitHubToken,
 		},
-		Timeout: 10 * 60, // 10 minutes
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create sandbox: %w", err)
@@ -151,7 +152,21 @@ Task ID: %s
 		return nil, fmt.Errorf("engineer agent: %w", err)
 	}
 
-	return &EngineerOutput{
-		Summary: result,
-	}, nil
+	output := &EngineerOutput{Summary: result}
+
+	// Parse structured fields from LLM output
+	var parsed struct {
+		Branch       string   `json:"branch"`
+		PRNumber     int      `json:"prNumber"`
+		PRURL        string   `json:"prUrl"`
+		FilesChanged []string `json:"filesChanged"`
+	}
+	if llm.ParseJSONFromLLM(result, &parsed) {
+		output.Branch = parsed.Branch
+		output.PRNumber = parsed.PRNumber
+		output.PRURL = parsed.PRURL
+		output.FilesChanged = parsed.FilesChanged
+	}
+
+	return output, nil
 }

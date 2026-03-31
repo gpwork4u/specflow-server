@@ -211,7 +211,9 @@ func (r *Registry) AddSandboxTools(githubToken string) {
 
 			result, err := sb.Exec(ctx, cloneCmd)
 			if err != nil {
-				return "", fmt.Errorf("git clone: %s", result)
+				// Redact token from error message
+				sanitized := strings.ReplaceAll(result, githubToken, "***")
+				return "", fmt.Errorf("git clone failed: %s", sanitized)
 			}
 			return "Cloned to /workspace/repo", nil
 		})

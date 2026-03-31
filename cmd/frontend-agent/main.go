@@ -12,6 +12,9 @@ import (
 
 func main() {
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Config error: %v", err)
+	}
 
 	c, err := client.Dial(client.Options{
 		HostPort: cfg.TemporalAddress,

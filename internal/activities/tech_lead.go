@@ -69,5 +69,17 @@ func (a *TechLeadActivities) Plan(ctx context.Context, input TechLeadInput) (*Te
 		return nil, err
 	}
 
-	return &TechLeadOutput{Plan: result}, nil
+	output := &TechLeadOutput{Plan: result}
+
+	// Parse structured JSON from LLM output
+	var parsed struct {
+		Tasks []TaskDef `json:"tasks"`
+		Waves []WaveDef `json:"waves"`
+	}
+	if llm.ParseJSONFromLLM(result, &parsed) {
+		output.Tasks = parsed.Tasks
+		output.Waves = parsed.Waves
+	}
+
+	return output, nil
 }

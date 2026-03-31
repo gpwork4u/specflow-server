@@ -234,16 +234,31 @@ func SpecFlowWorkflow(ctx workflow.Context, input SpecFlowInput) (*SpecFlowOutpu
 	// Phase 6: Approval (human-in-the-loop)
 	// ====================================================
 	status.Phase = "approval"
-	status.Message = fmt.Sprintf("驗證結果: %s — 等待人工確認", output.Verification.Verdict)
+	status.Message = fmt.Sprintf("驗證結果: %s — 等待人工確認 (24h timeout)", output.Verification.Verdict)
 	logger.Info("Phase 6: Waiting for approval", "verdict", output.Verification.Verdict)
 
+	// Wait for approval with 24-hour timeout
 	var approved bool
-	approvalCh.Receive(ctx, &approved)
+	timerCtx, cancel := workflow.WithCancel(ctx)
+	defer cancel()
+
+	timerFuture := workflow.NewTimer(timerCtx, 24*time.Hour)
+	selector := workflow.NewSelector(ctx)
+
+	selector.AddReceive(approvalCh, func(ch workflow.ReceiveChannel, more bool) {
+		ch.Receive(ctx, &approved)
+	})
+	selector.AddFuture(timerFuture, func(f workflow.Future) {
+		// Timeout — auto-reject
+		approved = false
+		logger.Warn("Approval timed out after 24 hours")
+	})
+	selector.Select(ctx)
 
 	if !approved {
 		status.Phase = "rejected"
-		status.Message = "已拒絕"
-		return output, fmt.Errorf("pipeline rejected by user")
+		status.Message = "已拒絕（或超時）"
+		return output, fmt.Errorf("pipeline rejected or timed out")
 	}
 
 	status.Phase = "done"

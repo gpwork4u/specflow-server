@@ -52,7 +52,9 @@ func (a *QAActivities) Review(ctx context.Context, input QAInput) (*QAOutput, er
 	sb, err := sandbox.Create(ctx, sandbox.Config{
 		Image:   sandbox.ImageQA,
 		Name:    sandboxName,
-		Network: "specflow-n8n_specflow",
+		Network: a.Cfg.DockerNetwork,
+		Memory:  a.Cfg.SandboxMemory,
+		CPUs:    a.Cfg.SandboxCPUs,
 		Env: map[string]string{
 			"GITHUB_TOKEN": a.Cfg.GitHubToken,
 		},
@@ -89,5 +91,19 @@ PR: #%d
 	if err != nil {
 		return nil, err
 	}
-	return &QAOutput{Summary: result}, nil
+
+	output := &QAOutput{Summary: result}
+
+	var parsed struct {
+		Status       string   `json:"status"`
+		BugsFound    []BugDef `json:"bugs"`
+		TestsWritten []string `json:"testsWritten"`
+	}
+	if llm.ParseJSONFromLLM(result, &parsed) {
+		output.Status = parsed.Status
+		output.BugsFound = parsed.BugsFound
+		output.TestsWritten = parsed.TestsWritten
+	}
+
+	return output, nil
 }

@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"time"
 )
 
 // Sandbox represents an ephemeral Docker container for one task execution.
@@ -34,8 +33,9 @@ type Config struct {
 	// Network to connect to (for accessing Ollama, etc.)
 	Network string
 
-	// Timeout for the entire sandbox lifecycle
-	Timeout time.Duration
+	// Resource limits
+	Memory string // e.g. "2g"
+	CPUs   string // e.g. "2"
 }
 
 // Create spins up a new ephemeral Docker container.
@@ -47,9 +47,9 @@ func Create(ctx context.Context, cfg Config) (*Sandbox, error) {
 		"--workdir", "/workspace",
 		// Auto-remove when stopped
 		"--rm",
-		// Resource limits per sandbox
-		"--memory", "2g",
-		"--cpus", "2",
+		// Resource limits
+		"--memory", orDefault(cfg.Memory, "2g"),
+		"--cpus", orDefault(cfg.CPUs, "2"),
 	}
 
 	// Network
@@ -155,6 +155,13 @@ func (s *Sandbox) Destroy(ctx context.Context) error {
 		return fmt.Errorf("destroy: %s %w", string(out), err)
 	}
 	return nil
+}
+
+func orDefault(val, fallback string) string {
+	if val == "" {
+		return fallback
+	}
+	return val
 }
 
 // Ensure io.Reader is available for WriteFile stdin

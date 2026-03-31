@@ -73,5 +73,23 @@ func (a *VerifierActivities) Verify(ctx context.Context, input VerifierInput) (*
 	if err != nil {
 		return nil, err
 	}
-	return &VerifierOutput{Summary: result}, nil
+
+	output := &VerifierOutput{Summary: result}
+
+	var parsed struct {
+		Verdict        string   `json:"verdict"`
+		Completeness   string   `json:"completeness"`
+		Correctness    string   `json:"correctness"`
+		Coherence      string   `json:"coherence"`
+		CriticalIssues []string `json:"criticalIssues"`
+	}
+	if llm.ParseJSONFromLLM(result, &parsed) {
+		output.Verdict = parsed.Verdict
+		output.Completeness = parsed.Completeness
+		output.Correctness = parsed.Correctness
+		output.Coherence = parsed.Coherence
+		output.CriticalIssues = parsed.CriticalIssues
+	}
+
+	return output, nil
 }
