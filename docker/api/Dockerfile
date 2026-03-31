@@ -10,5 +10,7 @@ RUN CGO_ENABLED=0 go build -o /bin/api ./cmd/api
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /bin/api /bin/api
+COPY web/ /web/
+WORKDIR /
 EXPOSE 8090
 ENTRYPOINT ["/bin/api"]

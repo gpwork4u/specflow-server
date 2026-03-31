@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 
 	"github.com/specflow-n8n/internal/config"
@@ -306,12 +308,265 @@ func main() {
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 
+	// ============================================
+	// Dashboard API endpoints
+	// ============================================
+
+	// GET /api/workflows — List recent SpecFlow workflows
+	http.HandleFunc("/api/workflows", func(w http.ResponseWriter, r *http.Request) {
+		setCORS(w)
+		if r.Method == http.MethodOptions {
+			return
+		}
+
+		query := r.URL.Query().Get("query")
+		if query == "" {
+			query = "WorkflowType = 'SpecFlowWorkflow' ORDER BY StartTime DESC"
+		}
+
+		resp, err := c.ListWorkflow(r.Context(), &workflowservice.ListWorkflowExecutionsRequest{
+			Namespace: "default",
+			PageSize:  50,
+			Query:     query,
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		type WorkflowSummary struct {
+			WorkflowID string `json:"workflowId"`
+			RunID      string `json:"runId"`
+			Status     string `json:"status"`
+			StartTime  string `json:"startTime"`
+			CloseTime  string `json:"closeTime,omitempty"`
+		}
+
+		var results []WorkflowSummary
+		for _, exec := range resp.Executions {
+			ws := WorkflowSummary{
+				WorkflowID: exec.Execution.WorkflowId,
+				RunID:      exec.Execution.RunId,
+				Status:     exec.Status.String(),
+				StartTime:  exec.StartTime.AsTime().Format(time.RFC3339),
+			}
+			if exec.CloseTime != nil {
+				ws.CloseTime = exec.CloseTime.AsTime().Format(time.RFC3339)
+			}
+			results = append(results, ws)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(results)
+	})
+
+	// GET /api/workflow/events?workflowId=xxx — Get workflow event history
+	http.HandleFunc("/api/workflow/events", func(w http.ResponseWriter, r *http.Request) {
+		setCORS(w)
+		workflowID := r.URL.Query().Get("workflowId")
+		runID := r.URL.Query().Get("runId")
+		if workflowID == "" {
+			http.Error(w, "workflowId required", http.StatusBadRequest)
+			return
+		}
+
+		iter := c.GetWorkflowHistory(r.Context(), workflowID, runID,
+			false, enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+
+		scheduledActivities := make(map[int64]string)
+
+		type EventEntry struct {
+			EventID      int64           `json:"eventId"`
+			EventType    string          `json:"eventType"`
+			Timestamp    string          `json:"timestamp"`
+			ActivityType string          `json:"activityType,omitempty"`
+			ActivityID   string          `json:"activityId,omitempty"`
+			TaskQueue    string          `json:"taskQueue,omitempty"`
+			Result       json.RawMessage `json:"result,omitempty"`
+			FailureMsg   string          `json:"failureMessage,omitempty"`
+			Identity     string          `json:"identity,omitempty"`
+		}
+
+		var events []EventEntry
+		for iter.HasNext() {
+			event, err := iter.Next()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			entry := EventEntry{
+				EventID:   event.EventId,
+				EventType: event.EventType.String(),
+				Timestamp: event.EventTime.AsTime().Format(time.RFC3339Nano),
+			}
+
+			switch event.EventType {
+			case enumspb.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED:
+				attrs := event.GetActivityTaskScheduledEventAttributes()
+				entry.ActivityType = attrs.ActivityType.GetName()
+				entry.ActivityID = attrs.ActivityId
+				entry.TaskQueue = attrs.TaskQueue.GetName()
+				scheduledActivities[event.EventId] = attrs.ActivityType.GetName()
+			case enumspb.EVENT_TYPE_ACTIVITY_TASK_STARTED:
+				attrs := event.GetActivityTaskStartedEventAttributes()
+				entry.ActivityType = scheduledActivities[attrs.ScheduledEventId]
+				entry.Identity = attrs.Identity
+			case enumspb.EVENT_TYPE_ACTIVITY_TASK_COMPLETED:
+				attrs := event.GetActivityTaskCompletedEventAttributes()
+				entry.ActivityType = scheduledActivities[attrs.ScheduledEventId]
+				if attrs.Result != nil && len(attrs.Result.Payloads) > 0 {
+					entry.Result = attrs.Result.Payloads[0].Data
+				}
+			case enumspb.EVENT_TYPE_ACTIVITY_TASK_FAILED:
+				attrs := event.GetActivityTaskFailedEventAttributes()
+				entry.ActivityType = scheduledActivities[attrs.ScheduledEventId]
+				if attrs.Failure != nil {
+					entry.FailureMsg = attrs.Failure.Message
+				}
+			default:
+				continue // skip non-activity events for dashboard
+			}
+
+			events = append(events, entry)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(events)
+	})
+
+	// GET /api/workflow/logs?workflowId=xxx — SSE stream of real-time agent logs
+	http.HandleFunc("/api/workflow/logs", func(w http.ResponseWriter, r *http.Request) {
+		workflowID := r.URL.Query().Get("workflowId")
+		runID := r.URL.Query().Get("runId")
+		if workflowID == "" {
+			http.Error(w, "workflowId required", http.StatusBadRequest)
+			return
+		}
+
+		// SSE headers
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		// Long-poll: blocks until new events arrive
+		iter := c.GetWorkflowHistory(r.Context(), workflowID, runID,
+			true, enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+
+		scheduledActivities := make(map[int64]string)
+
+		for iter.HasNext() {
+			event, err := iter.Next()
+			if err != nil {
+				fmt.Fprintf(w, "event: error\ndata: %q\n\n", err.Error())
+				flusher.Flush()
+				return
+			}
+
+			logEntry := map[string]any{
+				"eventId":   event.EventId,
+				"eventType": event.EventType.String(),
+				"timestamp": event.EventTime.AsTime().Format(time.RFC3339Nano),
+			}
+
+			emit := false
+			switch event.EventType {
+			case enumspb.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED:
+				attrs := event.GetActivityTaskScheduledEventAttributes()
+				scheduledActivities[event.EventId] = attrs.ActivityType.GetName()
+				logEntry["activityType"] = attrs.ActivityType.GetName()
+				logEntry["taskQueue"] = attrs.TaskQueue.GetName()
+				logEntry["phase"] = queueToPhase(attrs.TaskQueue.GetName())
+				emit = true
+
+			case enumspb.EVENT_TYPE_ACTIVITY_TASK_STARTED:
+				attrs := event.GetActivityTaskStartedEventAttributes()
+				logEntry["activityType"] = scheduledActivities[attrs.ScheduledEventId]
+				logEntry["identity"] = attrs.Identity
+				emit = true
+
+			case enumspb.EVENT_TYPE_ACTIVITY_TASK_COMPLETED:
+				attrs := event.GetActivityTaskCompletedEventAttributes()
+				logEntry["activityType"] = scheduledActivities[attrs.ScheduledEventId]
+				if attrs.Result != nil && len(attrs.Result.Payloads) > 0 {
+					logEntry["result"] = json.RawMessage(attrs.Result.Payloads[0].Data)
+				}
+				emit = true
+
+			case enumspb.EVENT_TYPE_ACTIVITY_TASK_FAILED:
+				attrs := event.GetActivityTaskFailedEventAttributes()
+				logEntry["activityType"] = scheduledActivities[attrs.ScheduledEventId]
+				if attrs.Failure != nil {
+					logEntry["failure"] = attrs.Failure.Message
+				}
+				emit = true
+
+			case enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED,
+				enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_FAILED,
+				enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_TIMED_OUT,
+				enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED:
+				logEntry["terminal"] = true
+				emit = true
+			}
+
+			if !emit {
+				continue
+			}
+
+			data, _ := json.Marshal(logEntry)
+			fmt.Fprintf(w, "event: log\ndata: %s\n\n", data)
+			flusher.Flush()
+		}
+
+		fmt.Fprintf(w, "event: done\ndata: {\"status\":\"completed\"}\n\n")
+		flusher.Flush()
+	})
+
+	// Serve dashboard static file
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" && r.URL.Path != "/index.html" {
+			http.NotFound(w, r)
+			return
+		}
+		http.ServeFile(w, r, "web/index.html")
+	})
+
 	port := os.Getenv("API_PORT")
 	if port == "" {
 		port = "8090"
 	}
 
 	log.Printf("API server starting on :%s", port)
-	log.Printf("Endpoints: /api/start, /api/status, /api/approve, /api/reject, /api/cancel, /api/health, /api/webhook/github")
+	log.Printf("Dashboard: http://localhost:%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
+}
+
+func setCORS(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+}
+
+func queueToPhase(queue string) string {
+	switch queue {
+	case config.SpecWriterQueue:
+		return "spec"
+	case config.TechLeadQueue:
+		return "plan"
+	case config.GolangAgentQueue, config.NestJSAgentQueue, config.FrontendAgentQueue:
+		return "implement"
+	case config.QAAgentQueue:
+		return "qa"
+	case config.VerifierQueue:
+		return "verify"
+	default:
+		return "unknown"
+	}
 }

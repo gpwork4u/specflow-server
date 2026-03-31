@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SpecFlow Dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --text-muted: #8b949e; --text-dim: #484f58;
+    --green: #3fb950; --blue: #58a6ff; --purple: #bc8cff;
+    --red: #f85149; --yellow: #d29922; --cyan: #39d2c0;
+    --green-bg: #0f2d1a; --blue-bg: #0c2d6b; --purple-bg: #271052;
+    --red-bg: #3d1214; --yellow-bg: #2d2306;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .header h1 { font-size: 18px; font-weight: 600; white-space: nowrap; }
+  .header h1 span { color: var(--cyan); }
+  .tab-bar { display: flex; gap: 4px; }
+  .tab { padding: 6px 16px; border-radius: 6px; font-size: 13px; cursor: pointer; border: 1px solid transparent; color: var(--text-muted); }
+  .tab.active { background: var(--bg); color: var(--text); border-color: var(--border); }
+  .tab:hover { color: var(--text); }
+  .auto-refresh { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); margin-left: auto; }
+  .auto-refresh input[type=checkbox] { accent-color: var(--green); }
+
+  .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+
+  /* Stats */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 20px; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+  .stat-value { font-size: 26px; font-weight: 700; }
+  .stat-label { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+  /* Workflow list */
+  .wf-list { display: flex; flex-direction: column; gap: 6px; }
+  .wf-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; cursor: pointer; display: flex; align-items: center; gap: 16px; transition: border-color 0.15s; }
+  .wf-card:hover { border-color: var(--cyan); }
+  .wf-card.active { border-color: var(--cyan); background: #0c2d4b; }
+  .wf-id { font-size: 13px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wf-status { font-size: 11px; padding: 2px 10px; border-radius: 10px; font-weight: 600; }
+  .wf-status.running { background: var(--blue-bg); color: var(--blue); }
+  .wf-status.completed { background: var(--green-bg); color: var(--green); }
+  .wf-status.failed { background: var(--red-bg); color: var(--red); }
+  .wf-status.canceled { background: var(--yellow-bg); color: var(--yellow); }
+  .wf-status.terminated { background: var(--red-bg); color: var(--red); }
+  .wf-time { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+
+  /* Pipeline phases */
+  .pipeline-phases { display: flex; gap: 4px; margin-bottom: 20px; overflow-x: auto; }
+  .phase { flex: 1; min-width: 100px; padding: 10px; border-radius: 6px; text-align: center; font-size: 12px; font-weight: 600; border: 1px solid var(--border); background: var(--surface); }
+  .phase.active { border-color: var(--cyan); color: var(--cyan); animation: pulse 1.5s infinite; }
+  .phase.done { border-color: var(--green); color: var(--green); background: var(--green-bg); }
+  .phase.error { border-color: var(--red); color: var(--red); background: var(--red-bg); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+  /* Log viewer */
+  .log-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .log-header { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+  .log-header h3 { font-size: 14px; flex: 1; }
+  .log-header .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 1s infinite; }
+  .log-header .live-dot.off { background: var(--text-dim); animation: none; }
+  .log-body { padding: 0; max-height: 600px; overflow-y: auto; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; line-height: 1.6; }
+  .log-entry { padding: 4px 16px; border-bottom: 1px solid #1c2128; display: flex; gap: 12px; }
+  .log-entry:hover { background: #1c2128; }
+  .log-ts { color: var(--text-dim); white-space: nowrap; min-width: 90px; }
+  .log-phase { min-width: 70px; font-weight: 600; }
+  .log-phase.spec { color: var(--cyan); }
+  .log-phase.plan { color: var(--purple); }
+  .log-phase.implement { color: var(--blue); }
+  .log-phase.qa { color: var(--yellow); }
+  .log-phase.verify { color: var(--green); }
+  .log-phase.bugfix { color: var(--red); }
+  .log-event { color: var(--text-muted); flex: 1; word-break: break-all; }
+  .log-event .activity { color: var(--text); font-weight: 500; }
+  .log-event .success { color: var(--green); }
+  .log-event .failure { color: var(--red); }
+  .log-event .queue { color: var(--text-dim); }
+
+  /* Split layout */
+  .split { display: grid; grid-template-columns: 340px 1fr; gap: 16px; }
+  @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+
+  .section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .empty { text-align: center; padding: 40px; color: var(--text-dim); font-size: 13px; }
+  .loading::after { content: ''; display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--cyan); border-radius: 50%; animation: spin 0.6s linear infinite; margin-left: 8px; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Actions */
+  .actions { display: flex; gap: 6px; margin-bottom: 16px; }
+  .btn { padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+  .btn:hover { border-color: var(--text-dim); }
+  .btn.primary { background: var(--green); color: #000; border-color: var(--green); }
+  .btn.danger { background: var(--red-bg); color: var(--red); border-color: var(--red); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1><span>&#9678;</span> SpecFlow Server</h1>
+  <div class="tab-bar">
+    <div class="tab active" onclick="switchTab('pipelines')">Pipelines</div>
+  </div>
+  <div class="auto-refresh">
+    <input type="checkbox" id="autoRefresh" checked onchange="toggleAutoRefresh()">
+    <label for="autoRefresh">Auto 10s</label>
+    <span id="lastUpdate" style="color:var(--text-dim);font-size:11px"></span>
+  </div>
+</div>
+
+<div class="container">
+  <div id="statsBar"></div>
+  <div class="split">
+    <div>
+      <div class="section-title">Pipelines</div>
+      <div id="workflowList" class="wf-list">
+        <div class="loading">Loading workflows</div>
+      </div>
+    </div>
+    <div>
+      <div id="detailPanel">
+        <div class="empty">
+          <p style="font-size:32px;margin-bottom:12px">&#9678;</p>
+          <p>Select a pipeline to view real-time agent logs</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = window.location.origin;
+let refreshTimer = null;
+let currentWfId = null;
+let eventSource = null;
+let workflows = [];
+
+// ---- Data fetching ----
+
+async function fetchWorkflows() {
+  try {
+    const res = await fetch(`${API}/api/workflows`);
+    workflows = await res.json() || [];
+    renderWorkflowList();
+    renderStats();
+    document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+  } catch (e) {
+    document.getElementById('workflowList').innerHTML = `<div class="empty" style="color:var(--red)">${e.message}</div>`;
+  }
+}
+
+async function fetchStatus(wfId) {
+  try {
+    const res = await fetch(`${API}/api/status?workflowId=${encodeURIComponent(wfId)}`);
+    return await res.json();
+  } catch { return null; }
+}
+
+// ---- Rendering ----
+
+function renderStats() {
+  const running = workflows.filter(w => w.status === 'WORKFLOW_EXECUTION_STATUS_RUNNING').length;
+  const completed = workflows.filter(w => w.status === 'WORKFLOW_EXECUTION_STATUS_COMPLETED').length;
+  const failed = workflows.filter(w => w.status === 'WORKFLOW_EXECUTION_STATUS_FAILED').length;
+  const total = workflows.length;
+
+  document.getElementById('statsBar').innerHTML = `<div class="stats">
+    <div class="stat"><div class="stat-value" style="color:var(--blue)">${running}</div><div class="stat-label">Running</div></div>
+    <div class="stat"><div class="stat-value" style="color:var(--green)">${completed}</div><div class="stat-label">Completed</div></div>
+    <div class="stat"><div class="stat-value" style="color:var(--red)">${failed}</div><div class="stat-label">Failed</div></div>
+    <div class="stat"><div class="stat-value">${total}</div><div class="stat-label">Total</div></div>
+  </div>`;
+}
+
+function renderWorkflowList() {
+  const el = document.getElementById('workflowList');
+  if (!workflows.length) { el.innerHTML = '<div class="empty">No pipelines yet</div>'; return; }
+
+  el.innerHTML = workflows.map(wf => {
+    const status = statusLabel(wf.status);
+    const time = new Date(wf.startTime).toLocaleString();
+    const active = wf.workflowId === currentWfId ? 'active' : '';
+    return `<div class="wf-card ${active}" onclick="selectWorkflow('${esc(wf.workflowId)}')">
+      <div class="wf-id" title="${esc(wf.workflowId)}">${esc(shortId(wf.workflowId))}</div>
+      <span class="wf-status ${status.cls}">${status.text}</span>
+      <span class="wf-time">${time}</span>
+    </div>`;
+  }).join('');
+}
+
+function statusLabel(s) {
+  const map = {
+    'WORKFLOW_EXECUTION_STATUS_RUNNING': { text: 'Running', cls: 'running' },
+    'WORKFLOW_EXECUTION_STATUS_COMPLETED': { text: 'Done', cls: 'completed' },
+    'WORKFLOW_EXECUTION_STATUS_FAILED': { text: 'Failed', cls: 'failed' },
+    'WORKFLOW_EXECUTION_STATUS_CANCELED': { text: 'Canceled', cls: 'canceled' },
+    'WORKFLOW_EXECUTION_STATUS_TERMINATED': { text: 'Terminated', cls: 'terminated' },
+    'WORKFLOW_EXECUTION_STATUS_TIMED_OUT': { text: 'Timeout', cls: 'failed' },
+  };
+  return map[s] || { text: s, cls: '' };
+}
+
+function shortId(id) {
+  // "specflow-org-repo-1234567890" -> "org/repo #1234"
+  const m = id.match(/^specflow-(.+?)-(\d+)$/);
+  if (m) return m[1].replace('-', '/') + ' #' + m[2].toString().slice(-6);
+  return id.length > 40 ? id.slice(0, 37) + '...' : id;
+}
+
+// ---- Workflow detail + real-time logs ----
+
+async function selectWorkflow(wfId) {
+  currentWfId = wfId;
+  renderWorkflowList();
+
+  // Close previous SSE
+  if (eventSource) { eventSource.close(); eventSource = null; }
+
+  const panel = document.getElementById('detailPanel');
+  panel.innerHTML = '<div class="loading">Loading</div>';
+
+  // Fetch current status
+  const status = await fetchStatus(wfId);
+
+  // Render detail view
+  panel.innerHTML = `
+    ${renderPhases(status)}
+    <div class="actions">
+      <button class="btn primary" onclick="approveWf('${esc(wfId)}')">Approve</button>
+      <button class="btn danger" onclick="rejectWf('${esc(wfId)}')">Reject</button>
+      <button class="btn" onclick="cancelWf('${esc(wfId)}')">Cancel</button>
+    </div>
+    <div class="log-panel">
+      <div class="log-header">
+        <h3>Agent Logs</h3>
+        <div class="live-dot" id="liveDot"></div>
+        <span style="font-size:11px;color:var(--text-dim)" id="logCount">0 events</span>
+      </div>
+      <div class="log-body" id="logBody"></div>
+    </div>
+  `;
+
+  // Start SSE stream
+  startLogStream(wfId);
+}
+
+function renderPhases(status) {
+  if (!status) return '';
+  const phases = ['spec', 'plan', 'implement', 'qa', 'bugfix', 'verify', 'approval'];
+  const phaseLabels = { spec: 'Spec', plan: 'Plan', implement: 'Implement', qa: 'QA', bugfix: 'Bug Fix', verify: 'Verify', approval: 'Approval' };
+  const currentIdx = phases.indexOf(status.phase);
+
+  return `<div class="pipeline-phases">${phases.map((p, i) => {
+    let cls = '';
+    if (i < currentIdx) cls = 'done';
+    else if (i === currentIdx) cls = status.phase === 'rejected' ? 'error' : 'active';
+    const extra = p === 'bugfix' && status.bugFixAttempt > 0 ? ` (${status.bugFixAttempt}/${3})` : '';
+    const extra2 = p === 'implement' && status.tasksTotal > 0 ? ` ${status.tasksDone}/${status.tasksTotal}` : '';
+    return `<div class="phase ${cls}">${phaseLabels[p] || p}${extra}${extra2}</div>`;
+  }).join('')}</div>
+  ${status.message ? `<div style="font-size:13px;color:var(--text-muted);margin-bottom:12px">${esc(status.message)}</div>` : ''}`;
+}
+
+let logCounter = 0;
+
+function startLogStream(wfId) {
+  logCounter = 0;
+  const logBody = document.getElementById('logBody');
+  const liveDot = document.getElementById('liveDot');
+
+  eventSource = new EventSource(`${API}/api/workflow/logs?workflowId=${encodeURIComponent(wfId)}`);
+
+  eventSource.addEventListener('log', (e) => {
+    const data = JSON.parse(e.data);
+    logCounter++;
+    document.getElementById('logCount').textContent = `${logCounter} events`;
+
+    const ts = new Date(data.timestamp).toLocaleTimeString();
+    const phase = data.phase || eventTypeToPhase(data.eventType);
+    const detail = formatLogEvent(data);
+
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.innerHTML = `
+      <span class="log-ts">${ts}</span>
+      <span class="log-phase ${phase}">${phase}</span>
+      <span class="log-event">${detail}</span>
+    `;
+    logBody.appendChild(entry);
+    logBody.scrollTop = logBody.scrollHeight;
+  });
+
+  eventSource.addEventListener('done', () => {
+    liveDot.classList.add('off');
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.innerHTML = '<span class="log-ts"></span><span class="log-phase" style="color:var(--green)">done</span><span class="log-event"><span class="success">Workflow completed</span></span>';
+    logBody.appendChild(entry);
+  });
+
+  eventSource.addEventListener('error', () => {
+    liveDot.classList.add('off');
+  });
+}
+
+function formatLogEvent(data) {
+  const type = data.eventType || '';
+  const activity = data.activityType || '';
+
+  if (type.includes('SCHEDULED')) {
+    return `<span class="activity">${esc(activity)}</span> scheduled on <span class="queue">${esc(data.taskQueue || '')}</span>`;
+  }
+  if (type.includes('STARTED')) {
+    return `<span class="activity">${esc(activity)}</span> started ${data.identity ? `(${esc(data.identity)})` : ''}`;
+  }
+  if (type.includes('COMPLETED')) {
+    let result = '';
+    if (data.result) {
+      try {
+        const r = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
+        if (r.summary) result = r.summary.substring(0, 200);
+        else if (r.verdict) result = `Verdict: ${r.verdict}`;
+        else if (r.status) result = `Status: ${r.status}`;
+        else result = JSON.stringify(r).substring(0, 200);
+      } catch { result = String(data.result).substring(0, 200); }
+    }
+    return `<span class="activity">${esc(activity)}</span> <span class="success">completed</span>${result ? '<br>' + esc(result) : ''}`;
+  }
+  if (type.includes('FAILED')) {
+    return `<span class="activity">${esc(activity)}</span> <span class="failure">FAILED: ${esc(data.failure || 'unknown')}</span>`;
+  }
+  if (data.terminal) {
+    return `<span class="failure">Workflow ${esc(type)}</span>`;
+  }
+  return esc(type);
+}
+
+function eventTypeToPhase(eventType) {
+  return ''; // phase comes from server-side queueToPhase
+}
+
+// ---- Actions ----
+
+async function approveWf(id) {
+  await fetch(`${API}/api/approve?workflowId=${encodeURIComponent(id)}`, { method: 'POST' });
+  fetchWorkflows();
+}
+async function rejectWf(id) {
+  await fetch(`${API}/api/reject?workflowId=${encodeURIComponent(id)}`, { method: 'POST' });
+  fetchWorkflows();
+}
+async function cancelWf(id) {
+  if (!confirm('Cancel this pipeline?')) return;
+  await fetch(`${API}/api/cancel?workflowId=${encodeURIComponent(id)}`, { method: 'POST' });
+  fetchWorkflows();
+}
+
+// ---- Utils ----
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+}
+
+function toggleAutoRefresh() {
+  if (document.getElementById('autoRefresh').checked) {
+    refreshTimer = setInterval(fetchWorkflows, 10000);
+  } else {
+    clearInterval(refreshTimer);
+  }
+}
+
+// ---- Init ----
+fetchWorkflows();
+refreshTimer = setInterval(fetchWorkflows, 10000);
+</script>
+</body>
+</html>
