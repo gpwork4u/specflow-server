@@ -30,6 +30,7 @@ func main() {
 
 	eng := &activities.EngineerActivities{Cfg: cfg, AgentType: activities.AgentFrontend}
 	w.RegisterActivity(eng.Implement)
+	w.RegisterActivity(eng.FixBugs)
 
 	log.Printf("Frontend agent worker started on queue: %s", config.FrontendAgentQueue)
 	if err := w.Run(worker.InterruptCh()); err != nil {

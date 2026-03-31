@@ -170,3 +170,94 @@ Task ID: %s
 
 	return output, nil
 }
+
+// FixBugs is the activity that fixes bugs found by QA.
+// It works on the EXISTING feature branch (no new branch needed).
+func (a *EngineerActivities) FixBugs(ctx context.Context, input BugFixInput) (*BugFixOutput, error) {
+	sandboxName := fmt.Sprintf("specflow-%s-%s-fix%d", a.AgentType, input.TaskID, input.Attempt)
+	sb, err := sandbox.Create(ctx, sandbox.Config{
+		Image:   sandbox.AgentTypeToImage(string(a.AgentType)),
+		Name:    sandboxName,
+		Network: a.Cfg.DockerNetwork,
+		Memory:  a.Cfg.SandboxMemory,
+		CPUs:    a.Cfg.SandboxCPUs,
+		Env: map[string]string{
+			"GITHUB_TOKEN": a.Cfg.GitHubToken,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create sandbox: %w", err)
+	}
+	defer sb.Destroy(context.Background())
+
+	llmClient := llm.NewClient(a.Cfg.LLMBaseURL, a.Cfg.LLMAPIKey, a.Cfg.LLMModel)
+	ghClient := gh.NewClient(a.Cfg.GitHubToken)
+
+	systemPrompt := a.systemPrompt() + `
+## Bug Fix 模式
+你正在修復 QA 發現的 bug，不是新建功能。
+
+規則：
+- 在現有的 feature branch 上修改，不要建立新的 branch
+- 用 git_clone 把 repo clone 到沙盒，checkout 到 feature branch
+- 逐一修復每個 bug
+- 每修一個 bug 就在沙盒中跑測試確認
+- 修完後用 multi_file_commit 推到遠端 feature branch
+- 不要建立新的 PR，原 PR 會自動更新
+`
+
+	agent := llm.NewAgent(llmClient, systemPrompt, 25)
+
+	reg := tools.NewRegistry(ghClient, sb)
+	reg.AddGitHubReadTools(input.Repo, input.FeatureBranch)
+	reg.AddGitHubWriteTools(input.Repo, input.BaseBranch)
+	reg.AddSandboxTools(a.Cfg.GitHubToken)
+	reg.AddPRReviewTool(input.Repo)
+	reg.ApplyTo(agent)
+
+	// Build bug list for prompt
+	bugList := ""
+	for i, bug := range input.Bugs {
+		bugList += fmt.Sprintf("%d. [%s] %s\n", i+1, bug.Severity, bug.Description)
+	}
+
+	prompt := fmt.Sprintf(`## Bug Fix 任務 (第 %d 次嘗試)
+
+Task ID: %s
+Repo: %s
+Feature Branch: %s
+PR: #%d
+
+## QA 發現的 Bug (共 %d 個)
+%s
+
+## 規格
+%s
+
+請修復以上所有 bug。完成後回報修復結果 JSON：
+` + "```json\n" + `{
+  "fixedBugs": ["bug 1 描述", "bug 2 描述"],
+  "filesChanged": ["path/to/file1", "path/to/file2"],
+  "summary": "修復摘要"
+}` + "\n```",
+		input.Attempt, input.TaskID, input.Repo, input.FeatureBranch, input.PRNumber,
+		len(input.Bugs), bugList, input.Specs)
+
+	result, err := agent.Run(ctx, prompt)
+	if err != nil {
+		return nil, fmt.Errorf("bug fix agent: %w", err)
+	}
+
+	output := &BugFixOutput{Summary: result}
+
+	var parsed struct {
+		FixedBugs    []string `json:"fixedBugs"`
+		FilesChanged []string `json:"filesChanged"`
+	}
+	if llm.ParseJSONFromLLM(result, &parsed) {
+		output.FixedBugs = parsed.FixedBugs
+		output.FilesChanged = parsed.FilesChanged
+	}
+
+	return output, nil
+}

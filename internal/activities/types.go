@@ -89,6 +89,25 @@ type BugDef struct {
 	Description string `json:"description"`
 }
 
+// BugFixInput is the input for the bug fix activity.
+// Engineer receives the original branch + bug list and fixes on the same branch.
+type BugFixInput struct {
+	Repo          string   `json:"repo"`
+	BaseBranch    string   `json:"baseBranch"`
+	FeatureBranch string   `json:"featureBranch"`
+	PRNumber      int      `json:"prNumber"`
+	TaskID        string   `json:"taskId"`
+	Bugs          []BugDef `json:"bugs"`
+	Specs         string   `json:"specs"`
+	Attempt       int      `json:"attempt"` // 1, 2, 3...
+}
+
+type BugFixOutput struct {
+	FixedBugs    []string `json:"fixedBugs"`
+	FilesChanged []string `json:"filesChanged"`
+	Summary      string   `json:"summary"`
+}
+
 // VerifierInput is the input for the verifier activity.
 type VerifierInput struct {
 	Repo     string `json:"repo"`

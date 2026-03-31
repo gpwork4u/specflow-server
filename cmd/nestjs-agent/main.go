@@ -30,6 +30,7 @@ func main() {
 
 	eng := &activities.EngineerActivities{Cfg: cfg, AgentType: activities.AgentNestJS}
 	w.RegisterActivity(eng.Implement)
+	w.RegisterActivity(eng.FixBugs)
 
 	log.Printf("NestJS agent worker started on queue: %s", config.NestJSAgentQueue)
 	if err := w.Run(worker.InterruptCh()); err != nil {

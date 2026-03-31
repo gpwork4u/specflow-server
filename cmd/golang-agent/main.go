@@ -31,6 +31,7 @@ func main() {
 	// Register Golang-specific activities
 	eng := &activities.EngineerActivities{Cfg: cfg, AgentType: activities.AgentGolang}
 	w.RegisterActivity(eng.Implement)
+	w.RegisterActivity(eng.FixBugs)
 
 	log.Printf("Golang agent worker started on queue: %s", config.GolangAgentQueue)
 	if err := w.Run(worker.InterruptCh()); err != nil {

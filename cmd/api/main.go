@@ -111,6 +111,44 @@ func main() {
 		json.NewEncoder(w).Encode(map[string]string{"status": "approved"})
 	})
 
+	// POST /api/resume — Resume a pipeline from a specific phase
+	// Body: {"repo":"...", "baseBranch":"...", "resumeFromPhase":"qa", "resumeData":{...}}
+	http.HandleFunc("/api/resume", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var input wf.SpecFlowInput
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if input.ResumeFromPhase == "" {
+			http.Error(w, "resumeFromPhase is required (spec, plan, implement, qa, verify)", http.StatusBadRequest)
+			return
+		}
+
+		workflowID := fmt.Sprintf("specflow-%s-resume-%d",
+			strings.ReplaceAll(input.Repo, "/", "-"), time.Now().UnixNano())
+
+		run, err := c.ExecuteWorkflow(context.Background(), client.StartWorkflowOptions{
+			ID:        workflowID,
+			TaskQueue: config.OrchestratorQueue,
+		}, wf.SpecFlowWorkflow, input)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		json.NewEncoder(w).Encode(map[string]string{
+			"workflowId":      run.GetID(),
+			"runId":           run.GetRunID(),
+			"resumeFromPhase": input.ResumeFromPhase,
+		})
+	})
+
 	// POST /api/webhook/github — GitHub Webhook handler
 	// Triggers a SpecFlow pipeline when an Issue with label "specflow" is created
 	webhookSecret := os.Getenv("GITHUB_WEBHOOK_SECRET")
