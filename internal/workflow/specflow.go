@@ -68,6 +68,11 @@ func SpecFlowWorkflow(ctx workflow.Context, input SpecFlowInput) (*SpecFlowOutpu
 		return status, nil
 	})
 
+	// ---- Full result query (for QA report review before approval) ----
+	_ = workflow.SetQueryHandler(ctx, "result", func() (*SpecFlowOutput, error) {
+		return output, nil
+	})
+
 	// ---- Signals ----
 	approvalCh := workflow.GetSignalChannel(ctx, "approval")
 	// "resume" signal: send any value to retry the current phase

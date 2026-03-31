@@ -308,6 +308,35 @@ func main() {
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 
+	// GET /api/workflow/result?workflowId=xxx — Get full pipeline result (specs, QA reports, verification)
+	// Used by dashboard to show QA report review before approval
+	http.HandleFunc("/api/workflow/result", func(w http.ResponseWriter, r *http.Request) {
+		setCORS(w)
+		if r.Method == http.MethodOptions {
+			return
+		}
+		workflowID := r.URL.Query().Get("workflowId")
+		if workflowID == "" {
+			http.Error(w, "workflowId required", http.StatusBadRequest)
+			return
+		}
+
+		resp, err := c.QueryWorkflow(context.Background(), workflowID, "", "result")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		var result wf.SpecFlowOutput
+		if err := resp.Get(&result); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	})
+
 	// ============================================
 	// Dashboard API endpoints
 	// ============================================

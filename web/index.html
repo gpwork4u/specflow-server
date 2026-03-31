@@ -94,6 +94,41 @@
   .btn:hover { border-color: var(--text-dim); }
   .btn.primary { background: var(--green); color: #000; border-color: var(--green); }
   .btn.danger { background: var(--red-bg); color: var(--red); border-color: var(--red); }
+
+  /* Detail tabs */
+  .detail-tabs { display: flex; gap: 2px; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
+  .dtab { padding: 8px 16px; font-size: 13px; cursor: pointer; color: var(--text-muted); border-bottom: 2px solid transparent; }
+  .dtab.active { color: var(--cyan); border-bottom-color: var(--cyan); }
+  .dtab:hover { color: var(--text); }
+
+  /* QA Report cards */
+  .report-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 10px; }
+  .report-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .report-title { font-size: 14px; font-weight: 600; }
+  .report-badge { font-size: 11px; padding: 3px 10px; border-radius: 10px; font-weight: 700; text-transform: uppercase; }
+  .report-badge.pass { background: var(--green-bg); color: var(--green); }
+  .report-badge.fail { background: var(--red-bg); color: var(--red); }
+  .report-badge.warn { background: var(--yellow-bg); color: var(--yellow); }
+  .report-badge.pending { background: var(--border); color: var(--text-muted); }
+  .report-link { font-size: 12px; color: var(--blue); text-decoration: none; display: block; margin-bottom: 10px; }
+  .report-link:hover { text-decoration: underline; }
+  .report-section { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .report-section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; }
+  .report-summary { font-size: 12px; color: var(--text-muted); line-height: 1.6; white-space: pre-wrap; }
+
+  /* Bug items */
+  .bug-item { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; font-size: 12px; }
+  .bug-severity { font-size: 10px; padding: 1px 6px; border-radius: 8px; font-weight: 600; white-space: nowrap; }
+  .bug-severity.critical { background: var(--red-bg); color: var(--red); }
+  .bug-severity.major { background: var(--yellow-bg); color: var(--yellow); }
+  .bug-severity.minor { background: var(--border); color: var(--text-muted); }
+  .test-item { font-size: 12px; color: var(--text-muted); padding: 2px 0; font-family: 'SF Mono', monospace; }
+
+  /* Verification grid */
+  .verification-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 12px 0; }
+  .v-metric { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; text-align: center; }
+  .v-label { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
+  .v-value { font-size: 18px; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -211,39 +246,157 @@ function shortId(id) {
 
 // ---- Workflow detail + real-time logs ----
 
+let currentTab = 'logs';
+
 async function selectWorkflow(wfId) {
   currentWfId = wfId;
+  currentTab = 'logs';
   renderWorkflowList();
 
-  // Close previous SSE
   if (eventSource) { eventSource.close(); eventSource = null; }
 
   const panel = document.getElementById('detailPanel');
   panel.innerHTML = '<div class="loading">Loading</div>';
 
-  // Fetch current status
   const status = await fetchStatus(wfId);
 
-  // Render detail view
   panel.innerHTML = `
     ${renderPhases(status)}
-    <div class="actions">
+    <div class="detail-tabs">
+      <div class="dtab active" id="dtab-logs" onclick="switchDetailTab('logs','${esc(wfId)}')">Agent Logs</div>
+      <div class="dtab" id="dtab-reports" onclick="switchDetailTab('reports','${esc(wfId)}')">QA Reports</div>
+      <div class="dtab" id="dtab-verification" onclick="switchDetailTab('verification','${esc(wfId)}')">Verification</div>
+    </div>
+    <div id="detailContent"></div>
+    <div class="actions" style="margin-top:12px">
       <button class="btn primary" onclick="approveWf('${esc(wfId)}')">Approve</button>
       <button class="btn danger" onclick="rejectWf('${esc(wfId)}')">Reject</button>
       <button class="btn" onclick="cancelWf('${esc(wfId)}')">Cancel</button>
     </div>
-    <div class="log-panel">
-      <div class="log-header">
-        <h3>Agent Logs</h3>
-        <div class="live-dot" id="liveDot"></div>
-        <span style="font-size:11px;color:var(--text-dim)" id="logCount">0 events</span>
-      </div>
-      <div class="log-body" id="logBody"></div>
-    </div>
   `;
 
-  // Start SSE stream
-  startLogStream(wfId);
+  switchDetailTab('logs', wfId);
+}
+
+async function switchDetailTab(tab, wfId) {
+  currentTab = tab;
+  document.querySelectorAll('.dtab').forEach(t => t.classList.remove('active'));
+  document.getElementById('dtab-' + tab)?.classList.add('active');
+
+  const content = document.getElementById('detailContent');
+
+  if (tab === 'logs') {
+    content.innerHTML = `
+      <div class="log-panel">
+        <div class="log-header">
+          <h3>Agent Logs</h3>
+          <div class="live-dot" id="liveDot"></div>
+          <span style="font-size:11px;color:var(--text-dim)" id="logCount">0 events</span>
+        </div>
+        <div class="log-body" id="logBody"></div>
+      </div>`;
+    startLogStream(wfId);
+  } else if (tab === 'reports') {
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    content.innerHTML = '<div class="loading">Loading QA reports</div>';
+    await renderQAReports(wfId, content);
+  } else if (tab === 'verification') {
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    content.innerHTML = '<div class="loading">Loading verification</div>';
+    await renderVerification(wfId, content);
+  }
+}
+
+async function fetchResult(wfId) {
+  try {
+    const res = await fetch(`${API}/api/workflow/result?workflowId=${encodeURIComponent(wfId)}`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
+async function renderQAReports(wfId, el) {
+  const result = await fetchResult(wfId);
+  if (!result) { el.innerHTML = '<div class="empty">No results yet (pipeline still running?)</div>'; return; }
+
+  const qaResults = result.qaResults || [];
+  const engResults = result.engineerResults || [];
+
+  if (!qaResults.length) { el.innerHTML = '<div class="empty">No QA reports yet</div>'; return; }
+
+  el.innerHTML = qaResults.map((qa, i) => {
+    const eng = engResults[i] || {};
+    const bugs = qa.bugsFound || [];
+    const tests = qa.testsWritten || [];
+    const statusCls = qa.status === 'PASS' ? 'pass' : qa.status === 'FAIL' ? 'fail' : 'pending';
+
+    return `<div class="report-card">
+      <div class="report-header">
+        <span class="report-title">PR #${eng.prNumber || '?'} — ${esc(eng.branch || 'unknown branch')}</span>
+        <span class="report-badge ${statusCls}">${qa.status || 'PENDING'}</span>
+      </div>
+      ${eng.prUrl ? `<a href="${esc(eng.prUrl)}" target="_blank" class="report-link">${esc(eng.prUrl)}</a>` : ''}
+      ${bugs.length ? `
+        <div class="report-section">
+          <div class="report-section-title">Bugs Found (${bugs.length})</div>
+          ${bugs.map(b => `<div class="bug-item">
+            <span class="bug-severity ${b.severity}">${b.severity}</span>
+            <span>${esc(b.description)}</span>
+          </div>`).join('')}
+        </div>
+      ` : '<div class="report-section"><div class="report-section-title" style="color:var(--green)">No bugs found</div></div>'}
+      ${tests.length ? `
+        <div class="report-section">
+          <div class="report-section-title">Tests Written (${tests.length})</div>
+          ${tests.map(t => `<div class="test-item">${esc(t)}</div>`).join('')}
+        </div>
+      ` : ''}
+      ${qa.summary ? `
+        <div class="report-section">
+          <div class="report-section-title">Summary</div>
+          <div class="report-summary">${esc(qa.summary).substring(0, 500)}</div>
+        </div>
+      ` : ''}
+      ${eng.filesChanged?.length ? `
+        <div class="report-section">
+          <div class="report-section-title">Files Changed (${eng.filesChanged.length})</div>
+          ${eng.filesChanged.map(f => `<div class="test-item">${esc(f)}</div>`).join('')}
+        </div>
+      ` : ''}
+    </div>`;
+  }).join('');
+}
+
+async function renderVerification(wfId, el) {
+  const result = await fetchResult(wfId);
+  if (!result || !result.verification) { el.innerHTML = '<div class="empty">No verification yet</div>'; return; }
+
+  const v = result.verification;
+  const verdictCls = v.verdict === 'PASS' ? 'pass' : v.verdict === 'FAIL' ? 'fail' : 'warn';
+
+  el.innerHTML = `<div class="report-card">
+    <div class="report-header">
+      <span class="report-title">Verification Report</span>
+      <span class="report-badge ${verdictCls}">${v.verdict || 'PENDING'}</span>
+    </div>
+    <div class="verification-grid">
+      <div class="v-metric"><div class="v-label">Completeness</div><div class="v-value">${esc(v.completeness || '-')}</div></div>
+      <div class="v-metric"><div class="v-label">Correctness</div><div class="v-value">${esc(v.correctness || '-')}</div></div>
+      <div class="v-metric"><div class="v-label">Coherence</div><div class="v-value">${esc(v.coherence || '-')}</div></div>
+    </div>
+    ${v.criticalIssues?.length ? `
+      <div class="report-section">
+        <div class="report-section-title" style="color:var(--red)">Critical Issues</div>
+        ${v.criticalIssues.map(i => `<div class="bug-item"><span class="bug-severity critical">critical</span><span>${esc(i)}</span></div>`).join('')}
+      </div>
+    ` : ''}
+    ${v.summary ? `
+      <div class="report-section">
+        <div class="report-section-title">Summary</div>
+        <div class="report-summary">${esc(v.summary).substring(0, 1000)}</div>
+      </div>
+    ` : ''}
+  </div>`;
 }
 
 function renderPhases(status) {
