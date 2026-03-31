@@ -114,7 +114,7 @@ func (a *EngineerActivities) Implement(ctx context.Context, input EngineerInput)
 	defer sb.Destroy(context.Background())
 
 	// 2. Set up LLM client and agent
-	llmClient := llm.NewClient(a.Cfg.LLMBaseURL, a.Cfg.LLMAPIKey, a.Cfg.LLMModel)
+	llmClient := llm.NewClientFromConfig(a.Cfg.LLMProviderConfig())
 	ghClient := gh.NewClient(a.Cfg.GitHubToken)
 
 	agent := llm.NewAgent(llmClient, a.systemPrompt(), 25)
@@ -190,7 +190,7 @@ func (a *EngineerActivities) FixBugs(ctx context.Context, input BugFixInput) (*B
 	}
 	defer sb.Destroy(context.Background())
 
-	llmClient := llm.NewClient(a.Cfg.LLMBaseURL, a.Cfg.LLMAPIKey, a.Cfg.LLMModel)
+	llmClient := llm.NewClientFromConfig(a.Cfg.LLMProviderConfig())
 	ghClient := gh.NewClient(a.Cfg.GitHubToken)
 
 	systemPrompt := a.systemPrompt() + `

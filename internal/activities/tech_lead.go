@@ -52,7 +52,7 @@ const techLeadPrompt = `你是一位資深技術主管（Tech Lead）。
 3. 分解任務和建立依賴圖`
 
 func (a *TechLeadActivities) Plan(ctx context.Context, input TechLeadInput) (*TechLeadOutput, error) {
-	llmClient := llm.NewClient(a.Cfg.LLMBaseURL, a.Cfg.LLMAPIKey, a.Cfg.LLMModel)
+	llmClient := llm.NewClientFromConfig(a.Cfg.LLMProviderConfig())
 	ghClient := gh.NewClient(a.Cfg.GitHubToken)
 
 	agent := llm.NewAgent(llmClient, techLeadPrompt, 10)

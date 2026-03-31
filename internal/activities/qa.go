@@ -64,7 +64,7 @@ func (a *QAActivities) Review(ctx context.Context, input QAInput) (*QAOutput, er
 	}
 	defer sb.Destroy(context.Background())
 
-	llmClient := llm.NewClient(a.Cfg.LLMBaseURL, a.Cfg.LLMAPIKey, a.Cfg.LLMModel)
+	llmClient := llm.NewClientFromConfig(a.Cfg.LLMProviderConfig())
 	ghClient := gh.NewClient(a.Cfg.GitHubToken)
 
 	agent := llm.NewAgent(llmClient, qaPrompt, 15)

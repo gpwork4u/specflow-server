@@ -47,7 +47,7 @@ const verifierPrompt = `你是一位驗證專家（Verifier）。
 - FAIL: 有 Critical 或 Major >= 2`
 
 func (a *VerifierActivities) Verify(ctx context.Context, input VerifierInput) (*VerifierOutput, error) {
-	llmClient := llm.NewClient(a.Cfg.LLMBaseURL, a.Cfg.LLMAPIKey, a.Cfg.LLMModel)
+	llmClient := llm.NewClientFromConfig(a.Cfg.LLMProviderConfig())
 	ghClient := gh.NewClient(a.Cfg.GitHubToken)
 
 	agent := llm.NewAgent(llmClient, verifierPrompt, 15)
