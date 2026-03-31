@@ -1,0 +1,251 @@
+version: "3.8"
+
+# SpecFlow: Temporal + Ephemeral Sandbox Architecture
+#
+# Worker containers: 長駐，輕量，只負責 poll task queue + 呼叫 LLM
+# Sandbox containers: 短暫，per-task，完整工具鏈，用完即銷毀
+#
+#   ┌───────────┐     ┌───────────────────┐
+#   │  Worker    │────→│ Ephemeral Sandbox  │
+#   │ (長駐)    │     │ (per-task, 用完銷毀)│
+#   │ poll queue │     │ golang:1.22 + lint │
+#   │ call LLM  │     │ /workspace (乾淨)  │
+#   └───────────┘     └───────────────────┘
+
+services:
+
+  # ============================================
+  # Temporal Infrastructure
+  # ============================================
+
+  postgresql:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: temporal
+      POSTGRES_USER: temporal
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - specflow
+
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    depends_on:
+      - postgresql
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=postgresql
+    ports:
+      - "7233:7233"
+    networks:
+      - specflow
+
+  temporal-ui:
+    image: temporalio/ui:2.32.0
+    depends_on:
+      - temporal
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+    ports:
+      - "8080:8080"
+    networks:
+      - specflow
+
+  # ============================================
+  # LLM Service
+  # ============================================
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - specflow
+
+  # ============================================
+  # API Server
+  # ============================================
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+    ports:
+      - "8090:8090"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+    depends_on:
+      - temporal
+    networks:
+      - specflow
+
+  # ============================================
+  # Orchestrator Worker (workflow 定義)
+  # ============================================
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: docker/orchestrator/Dockerfile
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+    depends_on:
+      - temporal
+    networks:
+      - specflow
+
+  # ============================================
+  # Support Agent (spec-writer + tech-lead + verifier)
+  # 不需要沙盒，只用 GitHub API + LLM
+  # ============================================
+
+  support-agent:
+    build:
+      context: .
+      dockerfile: docker/support-agent/Dockerfile
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - LLM_BASE_URL=http://ollama:11434/v1
+      - LLM_API_KEY=ollama
+      - LLM_MODEL=${LLM_MODEL:-qwen2.5-coder:32b}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    depends_on:
+      - temporal
+      - ollama
+    networks:
+      - specflow
+
+  # ============================================
+  # Coding Agent Workers
+  # 輕量長駐 container，收到任務時動態建立 ephemeral sandbox
+  # 需要掛載 Docker socket 才能建立 sandbox containers
+  # ============================================
+
+  golang-agent:
+    build:
+      context: .
+      dockerfile: docker/golang-agent/Dockerfile
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TASK_QUEUE=golang-agent-queue
+      - LLM_BASE_URL=http://ollama:11434/v1
+      - LLM_API_KEY=ollama
+      - LLM_MODEL=${LLM_MODEL:-qwen2.5-coder:32b}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - temporal
+      - ollama
+    networks:
+      - specflow
+
+  nestjs-agent:
+    build:
+      context: .
+      dockerfile: docker/nestjs-agent/Dockerfile
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TASK_QUEUE=nestjs-agent-queue
+      - LLM_BASE_URL=http://ollama:11434/v1
+      - LLM_API_KEY=ollama
+      - LLM_MODEL=${LLM_MODEL:-qwen2.5-coder:32b}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - temporal
+      - ollama
+    networks:
+      - specflow
+
+  frontend-agent:
+    build:
+      context: .
+      dockerfile: docker/frontend-agent/Dockerfile
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TASK_QUEUE=frontend-agent-queue
+      - LLM_BASE_URL=http://ollama:11434/v1
+      - LLM_API_KEY=ollama
+      - LLM_MODEL=${LLM_MODEL:-qwen2.5-coder:32b}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - temporal
+      - ollama
+    networks:
+      - specflow
+
+  qa-agent:
+    build:
+      context: .
+      dockerfile: docker/qa-agent/Dockerfile
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TASK_QUEUE=qa-agent-queue
+      - LLM_BASE_URL=http://ollama:11434/v1
+      - LLM_API_KEY=ollama
+      - LLM_MODEL=${LLM_MODEL:-qwen2.5-coder:32b}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - temporal
+      - ollama
+    networks:
+      - specflow
+
+  # ============================================
+  # Sandbox Images (build only, not running services)
+  # 這些是 ephemeral container 的 base images
+  # ============================================
+
+  sandbox-golang:
+    build:
+      context: .
+      dockerfile: docker/sandbox/golang.Dockerfile
+    image: specflow-sandbox-golang:latest
+    entrypoint: ["echo", "sandbox image built"]
+
+  sandbox-nestjs:
+    build:
+      context: .
+      dockerfile: docker/sandbox/nestjs.Dockerfile
+    image: specflow-sandbox-nestjs:latest
+    entrypoint: ["echo", "sandbox image built"]
+
+  sandbox-frontend:
+    build:
+      context: .
+      dockerfile: docker/sandbox/frontend.Dockerfile
+    image: specflow-sandbox-frontend:latest
+    entrypoint: ["echo", "sandbox image built"]
+
+  sandbox-qa:
+    build:
+      context: .
+      dockerfile: docker/sandbox/qa.Dockerfile
+    image: specflow-sandbox-qa:latest
+    entrypoint: ["echo", "sandbox image built"]
+
+networks:
+  specflow:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  ollama_data:
