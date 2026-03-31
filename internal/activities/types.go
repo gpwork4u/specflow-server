@@ -52,13 +52,30 @@ type WaveDef struct {
 
 // EngineerInput is the input for any coding agent activity.
 type EngineerInput struct {
-	Repo            string `json:"repo"`
-	BaseBranch      string `json:"baseBranch"`
-	TaskID          string `json:"taskId"`
-	TaskDescription string `json:"taskDescription"`
-	Specs           string `json:"specs"`
-	Plan            string `json:"plan"`
-	DesignSystem    string `json:"designSystem,omitempty"` // Design system doc (for frontend tasks)
+	Repo            string   `json:"repo"`
+	BaseBranch      string   `json:"baseBranch"`
+	TaskID          string   `json:"taskId"`
+	TaskDescription string   `json:"taskDescription"`
+	Specs           string   `json:"specs"`
+	Plan            string   `json:"plan"`
+	DesignSystem    string   `json:"designSystem,omitempty"` // Design system doc (for frontend tasks)
+	WorkingDirs     []string `json:"workingDirs,omitempty"`  // Allowed directories (enforced by tools)
+}
+
+// DefaultWorkingDirs returns the allowed directories for each agent type.
+func DefaultWorkingDirs(agentType AgentType) []string {
+	switch agentType {
+	case AgentGolang, AgentNestJS:
+		return []string{"src/", "pkg/", "internal/", "cmd/", "api/", "lib/", "config/", "migrations/"}
+	case AgentFrontend:
+		return []string{"web/", "frontend/", "src/components/", "src/pages/", "src/hooks/", "src/styles/", "public/"}
+	case AgentUIDesigner:
+		return []string{"design-system/", "src/components/ui/"}
+	case AgentQA:
+		return []string{"test/", "tests/", "e2e/", "__tests__/", "cypress/", "playwright/"}
+	default:
+		return nil // no restriction
+	}
 }
 
 type EngineerOutput struct {

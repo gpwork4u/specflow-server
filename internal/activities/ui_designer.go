@@ -138,6 +138,7 @@ func (a *UIDesignerActivities) Design(ctx context.Context, input UIDesignerInput
 	agent := llm.NewAgent(llmClient, uiDesignerPrompt, 20)
 
 	reg := tools.NewRegistry(ghClient, sb)
+	reg.SetAllowedDirs(DefaultWorkingDirs(AgentUIDesigner))
 	reg.AddGitHubReadTools(input.Repo, input.BaseBranch)
 	reg.AddGitHubWriteTools(input.Repo, input.BaseBranch)
 	reg.AddSandboxTools(a.Cfg.GitHubToken)

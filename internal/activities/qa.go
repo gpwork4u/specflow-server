@@ -70,6 +70,7 @@ func (a *QAActivities) Review(ctx context.Context, input QAInput) (*QAOutput, er
 	agent := llm.NewAgent(llmClient, qaPrompt, 15)
 
 	reg := tools.NewRegistry(ghClient, sb)
+	reg.SetAllowedDirs(DefaultWorkingDirs(AgentQA))
 	reg.AddGitHubReadTools(input.Repo, input.FeatureBranch)
 	reg.AddGitHubWriteTools(input.Repo, input.FeatureBranch)
 	reg.AddPRReviewTool(input.Repo)

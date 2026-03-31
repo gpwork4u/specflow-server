@@ -54,11 +54,15 @@ func (a *EngineerActivities) systemPrompt() string {
 - 一定要在沙盒中編譯和測試通過後才提交到遠端
 - 每個 commit 對應一個邏輯單元
 - 不做任務範圍外的修改
+- 只能修改你的 working directory 內的檔案，寫入其他目錄會被拒絕
 `
 
 	switch a.AgentType {
 	case AgentGolang:
 		return base + `
+## Working Directory: src/, pkg/, internal/, cmd/, api/, lib/, config/, migrations/
+你只能在這些目錄中建立和修改檔案。不要修改 web/, test/, design-system/ 等目錄。
+
 ## Golang 專屬指引
 - 沙盒已安裝: go 1.22, golangci-lint, goimports, delve
 - shell "cd /workspace/repo && go build ./..." 確認編譯
@@ -70,6 +74,9 @@ func (a *EngineerActivities) systemPrompt() string {
 `
 	case AgentNestJS:
 		return base + `
+## Working Directory: src/, pkg/, internal/, cmd/, api/, lib/, config/, migrations/
+你只能在這些目錄中建立和修改檔案。不要修改 web/, test/, design-system/ 等目錄。
+
 ## NestJS 專屬指引
 - 沙盒已安裝: node 20, npm, @nestjs/cli, typescript, prisma
 - shell "cd /workspace/repo && npm install" 安裝依賴
@@ -80,6 +87,9 @@ func (a *EngineerActivities) systemPrompt() string {
 `
 	case AgentFrontend:
 		return base + `
+## Working Directory: web/, frontend/, src/components/, src/pages/, src/hooks/, src/styles/, public/
+你只能在這些目錄中建立和修改檔案。不要修改 src/（後端）、test/、design-system/ 等目錄。
+
 ## Frontend 專屬指引
 - 沙盒已安裝: node 20, pnpm, vite, typescript, tailwindcss
 - shell "cd /workspace/repo && pnpm install" 安裝依賴
@@ -130,6 +140,12 @@ func (a *EngineerActivities) Implement(ctx context.Context, input EngineerInput)
 
 	// 3. Register tools — both GitHub API and sandbox execution
 	reg := tools.NewRegistry(ghClient, sb)
+	// Enforce working directory boundaries
+	allowedDirs := input.WorkingDirs
+	if len(allowedDirs) == 0 {
+		allowedDirs = DefaultWorkingDirs(a.AgentType)
+	}
+	reg.SetAllowedDirs(allowedDirs)
 	reg.AddGitHubReadTools(input.Repo, input.BaseBranch)
 	reg.AddGitHubWriteTools(input.Repo, input.BaseBranch)
 	reg.AddSandboxTools(a.Cfg.GitHubToken)
@@ -223,6 +239,7 @@ func (a *EngineerActivities) FixBugs(ctx context.Context, input BugFixInput) (*B
 	agent := llm.NewAgent(llmClient, systemPrompt, 25)
 
 	reg := tools.NewRegistry(ghClient, sb)
+	reg.SetAllowedDirs(DefaultWorkingDirs(a.AgentType))
 	reg.AddGitHubReadTools(input.Repo, input.FeatureBranch)
 	reg.AddGitHubWriteTools(input.Repo, input.BaseBranch)
 	reg.AddSandboxTools(a.Cfg.GitHubToken)

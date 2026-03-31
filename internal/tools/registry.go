@@ -13,9 +13,10 @@ import (
 
 // Registry holds tools available to a specific agent.
 type Registry struct {
-	gh      *github.Client
-	sandbox *sandbox.Sandbox // nil if no sandbox needed (e.g. spec-writer)
-	tools   map[string]registeredTool
+	gh          *github.Client
+	sandbox     *sandbox.Sandbox // nil if no sandbox needed (e.g. spec-writer)
+	tools       map[string]registeredTool
+	allowedDirs []string // if set, write operations are restricted to these directories
 }
 
 type registeredTool struct {
@@ -29,6 +30,36 @@ func NewRegistry(gh *github.Client, sb *sandbox.Sandbox) *Registry {
 		sandbox: sb,
 		tools:   make(map[string]registeredTool),
 	}
+}
+
+// SetAllowedDirs restricts write operations to specific directory prefixes.
+// Read operations are not restricted.
+func (r *Registry) SetAllowedDirs(dirs []string) {
+	r.allowedDirs = dirs
+}
+
+// checkPathAllowed validates that a file path is within the allowed directories.
+// Returns error if path is outside allowed dirs. Returns nil if no restrictions set.
+func (r *Registry) checkPathAllowed(path string) error {
+	if len(r.allowedDirs) == 0 {
+		return nil
+	}
+	// Normalize: remove leading slash and /workspace/repo/ prefix
+	normalized := strings.TrimPrefix(path, "/")
+	normalized = strings.TrimPrefix(normalized, "workspace/repo/")
+	normalized = strings.TrimPrefix(normalized, "workspace/")
+
+	for _, dir := range r.allowedDirs {
+		if strings.HasPrefix(normalized, dir) {
+			return nil
+		}
+	}
+	// Also allow root config files (package.json, go.mod, etc.)
+	if !strings.Contains(normalized, "/") {
+		return nil
+	}
+	return fmt.Errorf("path %q is outside allowed working directories %v. You can only modify files in: %s",
+		path, r.allowedDirs, strings.Join(r.allowedDirs, ", "))
 }
 
 func (r *Registry) register(name, description string, params json.RawMessage, handler llm.ToolHandler) {
@@ -122,6 +153,9 @@ func (r *Registry) AddGitHubWriteTools(repo, baseBranch string) {
 				SHA     string `json:"sha"`
 			}
 			json.Unmarshal([]byte(args), &p)
+			if err := r.checkPathAllowed(p.Path); err != nil {
+				return "", err
+			}
 			err := r.gh.WriteFile(ctx, repo, p.Path, p.Branch, p.Content, p.Message, p.SHA)
 			if err != nil {
 				return "", err
@@ -138,6 +172,12 @@ func (r *Registry) AddGitHubWriteTools(repo, baseBranch string) {
 				Files   []github.FileChange `json:"files"`
 			}
 			json.Unmarshal([]byte(args), &p)
+			// Validate all file paths
+			for _, f := range p.Files {
+				if err := r.checkPathAllowed(f.Path); err != nil {
+					return "", err
+				}
+			}
 			sha, err := r.gh.MultiFileCommit(ctx, repo, p.Branch, p.Message, p.Files)
 			if err != nil {
 				return "", err
@@ -227,6 +267,10 @@ func (r *Registry) AddSandboxTools(githubToken string) {
 			}
 			json.Unmarshal([]byte(args), &p)
 
+			if err := r.checkPathAllowed(p.Path); err != nil {
+				return "", err
+			}
+
 			// Ensure parent directory exists
 			sb.Exec(ctx, fmt.Sprintf("mkdir -p $(dirname %s)", p.Path))
 
@@ -264,6 +308,10 @@ func (r *Registry) AddSandboxTools(githubToken string) {
 				NewString string `json:"new_string"`
 			}
 			json.Unmarshal([]byte(args), &p)
+
+			if err := r.checkPathAllowed(p.Path); err != nil {
+				return "", err
+			}
 
 			// Read current file
 			content, err := sb.ReadFile(ctx, p.Path)
