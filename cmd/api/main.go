@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
@@ -19,6 +20,7 @@ import (
 	"go.temporal.io/sdk/client"
 
 	"github.com/specflow-n8n/internal/config"
+	"github.com/specflow-n8n/internal/llm"
 	wf "github.com/specflow-n8n/internal/workflow"
 )
 
@@ -306,6 +308,196 @@ func main() {
 	// GET /api/health — Health check
 	http.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	// ============================================
+	// Spec Discussion (interactive chat)
+	// ============================================
+
+	// Chat sessions: sessionId -> ChatSession
+	specSessions := make(map[string]*llm.ChatSession)
+	var sessionsMu sync.Mutex
+
+	specSystemPrompt := `你是一位資深的產品規格專家（Spec Writer）。
+透過結構化的對話，將使用者的需求轉化為精確的技術規格文件。
+
+## 對話規則
+1. 不問開放式問題 — 每次提供 2-4 個選項讓使用者選擇
+2. 每次最多問 3 個問題
+3. 漸進式深入 — 從概覽到細節
+4. 使用者確認後才進入下一個模組
+
+## 對話階段
+Phase 1: 確認專案概覽（名稱、目標使用者、核心功能）
+Phase 2: 逐一深入每個功能（API、資料模型、WHEN/THEN 場景）
+Phase 3: 非功能需求（效能、安全、部署）
+Phase 4: 總結確認 — 輸出完整規格
+
+## 回應格式
+每次回應包含：
+1. 對使用者選擇的確認摘要
+2. 下一步的選擇題（以 A/B/C/D 格式呈現）
+3. 目前的完成進度（例如：功能 2/5 已確認）
+
+當所有功能都確認完畢，輸出完整的規格文件，使用 WHEN/THEN 格式。`
+
+	// POST /api/spec/start — Start a new spec discussion session
+	http.HandleFunc("/api/spec/start", func(w http.ResponseWriter, r *http.Request) {
+		setCORS(w)
+		if r.Method == http.MethodOptions {
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			Repo        string `json:"repo"`
+			Requirement string `json:"requirement"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		sessionID := fmt.Sprintf("spec-%d", time.Now().UnixNano())
+		llmClient := llm.NewClientFromConfig(cfg.LLMProviderConfig())
+		session := llm.NewChatSession(llmClient, specSystemPrompt)
+
+		sessionsMu.Lock()
+		specSessions[sessionID] = session
+		sessionsMu.Unlock()
+
+		// Send initial message
+		initialMsg := fmt.Sprintf("我要為 %s 建立規格。需求描述：\n%s", req.Repo, req.Requirement)
+		reply, err := session.Send(r.Context(), initialMsg)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"sessionId": sessionID,
+			"reply":     reply,
+			"messages":  session.GetMessages(),
+		})
+	})
+
+	// POST /api/spec/chat — Send a message in an existing spec session
+	http.HandleFunc("/api/spec/chat", func(w http.ResponseWriter, r *http.Request) {
+		setCORS(w)
+		if r.Method == http.MethodOptions {
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			SessionID string `json:"sessionId"`
+			Message   string `json:"message"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		sessionsMu.Lock()
+		session, ok := specSessions[req.SessionID]
+		sessionsMu.Unlock()
+		if !ok {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+
+		reply, err := session.Send(r.Context(), req.Message)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"reply":    reply,
+			"messages": session.GetMessages(),
+		})
+	})
+
+	// POST /api/spec/confirm — Confirm specs and start pipeline
+	http.HandleFunc("/api/spec/confirm", func(w http.ResponseWriter, r *http.Request) {
+		setCORS(w)
+		if r.Method == http.MethodOptions {
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			SessionID  string `json:"sessionId"`
+			Repo       string `json:"repo"`
+			BaseBranch string `json:"baseBranch"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		sessionsMu.Lock()
+		session, ok := specSessions[req.SessionID]
+		sessionsMu.Unlock()
+		if !ok {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+
+		// Get the final specs from the last assistant message
+		specs := session.GetLastAssistantMessage()
+		if specs == "" {
+			http.Error(w, "no specs generated yet", http.StatusBadRequest)
+			return
+		}
+
+		baseBranch := req.BaseBranch
+		if baseBranch == "" {
+			baseBranch = "main"
+		}
+
+		// Start pipeline from Phase 2 (plan), skipping spec writer since we already have specs
+		workflowID := fmt.Sprintf("specflow-%s-%d",
+			strings.ReplaceAll(req.Repo, "/", "-"), time.Now().UnixNano())
+
+		input := wf.SpecFlowInput{
+			Repo:            req.Repo,
+			BaseBranch:      baseBranch,
+			ResumeFromPhase: "plan",
+			ResumeData:      &wf.SpecFlowOutput{Specs: specs},
+		}
+
+		run, err := c.ExecuteWorkflow(context.Background(), client.StartWorkflowOptions{
+			ID:        workflowID,
+			TaskQueue: config.OrchestratorQueue,
+		}, wf.SpecFlowWorkflow, input)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Clean up session
+		sessionsMu.Lock()
+		delete(specSessions, req.SessionID)
+		sessionsMu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"workflowId": run.GetID(),
+			"runId":      run.GetRunID(),
+			"specs":      specs[:min(len(specs), 500)],
+		})
 	})
 
 	// GET /api/workflow/result?workflowId=xxx — Get full pipeline result (specs, QA reports, verification)

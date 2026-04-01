@@ -129,6 +129,55 @@
   .v-metric { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; text-align: center; }
   .v-label { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
   .v-value { font-size: 18px; font-weight: 700; }
+
+  /* Spec discussion layout */
+  .spec-layout { display: grid; grid-template-columns: 300px 1fr; gap: 16px; }
+  @media (max-width: 900px) { .spec-layout { grid-template-columns: 1fr; } }
+  .spec-sidebar { }
+  .spec-chat { }
+  .input-label { font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px; }
+  .input-field { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 6px; font-size: 13px; width: 100%; font-family: inherit; resize: vertical; }
+  .input-field:focus { outline: none; border-color: var(--cyan); }
+
+  /* Chat panel */
+  .chat-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; display: flex; flex-direction: column; height: 70vh; }
+  .chat-header { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+  .chat-header h3 { font-size: 14px; flex: 1; }
+  .chat-body { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .chat-input-bar { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; }
+  .chat-input-bar .input-field { flex: 1; }
+
+  /* Chat messages */
+  .chat-msg { max-width: 85%; }
+  .chat-msg.user { align-self: flex-end; }
+  .chat-msg.assistant { align-self: flex-start; }
+  .chat-msg-bubble { padding: 10px 14px; border-radius: 12px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+  .chat-msg.user .chat-msg-bubble { background: var(--blue-bg); border: 1px solid #1d4ed8; border-bottom-right-radius: 4px; }
+  .chat-msg.assistant .chat-msg-bubble { background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+  .chat-msg-label { font-size: 10px; color: var(--text-dim); margin-bottom: 2px; padding: 0 4px; }
+
+  /* Architecture view */
+  .arch-section { margin-bottom: 16px; }
+  .arch-title { font-size: 13px; font-weight: 600; color: var(--cyan); margin-bottom: 8px; }
+  .task-grid { display: flex; flex-direction: column; gap: 6px; }
+  .task-card { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; }
+  .task-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .task-card-id { font-size: 11px; font-weight: 700; color: var(--cyan); }
+  .task-card-title { font-size: 13px; font-weight: 500; }
+  .task-card-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .task-agent { font-size: 10px; padding: 1px 8px; border-radius: 8px; font-weight: 600; }
+  .task-agent.golang { background: #16324830; color: #58a6ff; }
+  .task-agent.nestjs { background: #e0234e20; color: #e0234e; }
+  .task-agent.frontend { background: #61dafb20; color: #61dafb; }
+  .task-agent.qa { background: var(--yellow-bg); color: var(--yellow); }
+  .task-agent.ui-designer { background: var(--purple-bg); color: var(--purple); }
+  .task-dep { font-size: 10px; color: var(--text-dim); }
+  .wave-header { font-size: 12px; font-weight: 600; color: var(--text-muted); padding: 8px 0 4px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+  .wave-header span { color: var(--cyan); }
+
+  /* Spec viewer */
+  .spec-content { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; max-height: 60vh; overflow-y: auto; }
+  .spec-content h1, .spec-content h2, .spec-content h3 { color: var(--cyan); margin: 16px 0 8px; }
 </style>
 </head>
 <body>
@@ -136,7 +185,8 @@
 <div class="header">
   <h1><span>&#9678;</span> SpecFlow Server</h1>
   <div class="tab-bar">
-    <div class="tab active" onclick="switchTab('pipelines')">Pipelines</div>
+    <div class="tab" id="tab-spec" onclick="switchPage('spec')">New Spec</div>
+    <div class="tab active" id="tab-pipelines" onclick="switchPage('pipelines')">Pipelines</div>
   </div>
   <div class="auto-refresh">
     <input type="checkbox" id="autoRefresh" checked onchange="toggleAutoRefresh()">
@@ -145,7 +195,48 @@
   </div>
 </div>
 
-<div class="container">
+<!-- ============ Spec Discussion Page ============ -->
+<div class="container" id="page-spec" style="display:none">
+  <div class="spec-layout">
+    <div class="spec-sidebar">
+      <div class="section-title">New Pipeline</div>
+      <div style="margin-bottom:12px">
+        <label class="input-label">GitHub Repo</label>
+        <input type="text" id="specRepo" class="input-field" placeholder="owner/repo" />
+      </div>
+      <div style="margin-bottom:12px">
+        <label class="input-label">Requirement</label>
+        <textarea id="specRequirement" class="input-field" rows="4" placeholder="Describe what you want to build..."></textarea>
+      </div>
+      <button class="btn primary" style="width:100%" onclick="startSpecChat()">Start Discussion</button>
+      <div id="specConfirmBox" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <button class="btn primary" style="width:100%;margin-bottom:6px" onclick="confirmSpec()">Confirm Specs & Start Pipeline</button>
+        <div style="font-size:11px;color:var(--text-dim);text-align:center">Specs will be sent to Tech Lead for planning</div>
+      </div>
+    </div>
+    <div class="spec-chat">
+      <div class="chat-panel">
+        <div class="chat-header">
+          <h3>Spec Writer Agent</h3>
+          <div class="live-dot off" id="specLiveDot"></div>
+        </div>
+        <div class="chat-body" id="chatBody">
+          <div class="empty">
+            <p style="margin-bottom:8px">Fill in repo and requirement, then click "Start Discussion"</p>
+            <p style="font-size:11px;color:var(--text-dim)">The Spec Writer will ask structured questions to define your specs</p>
+          </div>
+        </div>
+        <div class="chat-input-bar" id="chatInputBar" style="display:none">
+          <input type="text" id="chatInput" class="input-field" placeholder="Type your answer or choice (A/B/C/D)..." onkeydown="if(event.key==='Enter')sendChatMessage()" />
+          <button class="btn primary" onclick="sendChatMessage()">Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Pipelines Page ============ -->
+<div class="container" id="page-pipelines">
   <div id="statsBar"></div>
   <div class="split">
     <div>
@@ -264,6 +355,8 @@ async function selectWorkflow(wfId) {
     ${renderPhases(status)}
     <div class="detail-tabs">
       <div class="dtab active" id="dtab-logs" onclick="switchDetailTab('logs','${esc(wfId)}')">Agent Logs</div>
+      <div class="dtab" id="dtab-specs" onclick="switchDetailTab('specs','${esc(wfId)}')">Specs</div>
+      <div class="dtab" id="dtab-architecture" onclick="switchDetailTab('architecture','${esc(wfId)}')">Architecture</div>
       <div class="dtab" id="dtab-reports" onclick="switchDetailTab('reports','${esc(wfId)}')">QA Reports</div>
       <div class="dtab" id="dtab-verification" onclick="switchDetailTab('verification','${esc(wfId)}')">Verification</div>
     </div>
@@ -296,6 +389,14 @@ async function switchDetailTab(tab, wfId) {
         <div class="log-body" id="logBody"></div>
       </div>`;
     startLogStream(wfId);
+  } else if (tab === 'specs') {
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    content.innerHTML = '<div class="loading">Loading specs</div>';
+    await renderSpecs(wfId, content);
+  } else if (tab === 'architecture') {
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    content.innerHTML = '<div class="loading">Loading architecture</div>';
+    await renderArchitecture(wfId, content);
   } else if (tab === 'reports') {
     if (eventSource) { eventSource.close(); eventSource = null; }
     content.innerHTML = '<div class="loading">Loading QA reports</div>';
@@ -525,6 +626,218 @@ function toggleAutoRefresh() {
   } else {
     clearInterval(refreshTimer);
   }
+}
+
+// ---- Page switching ----
+
+function switchPage(page) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-' + page)?.classList.add('active');
+  document.getElementById('page-spec').style.display = page === 'spec' ? 'block' : 'none';
+  document.getElementById('page-pipelines').style.display = page === 'pipelines' ? 'block' : 'none';
+  if (page === 'pipelines') fetchWorkflows();
+}
+
+// ---- Spec Discussion Chat ----
+
+let specSessionId = null;
+
+async function startSpecChat() {
+  const repo = document.getElementById('specRepo').value.trim();
+  const req = document.getElementById('specRequirement').value.trim();
+  if (!repo || !req) { alert('Please fill repo and requirement'); return; }
+
+  const chatBody = document.getElementById('chatBody');
+  chatBody.innerHTML = '<div class="loading">Starting discussion</div>';
+  document.getElementById('specLiveDot').classList.remove('off');
+
+  try {
+    const res = await fetch(`${API}/api/spec/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo, requirement: req })
+    });
+    const data = await res.json();
+    specSessionId = data.sessionId;
+    renderChatMessages(data.messages || []);
+    document.getElementById('chatInputBar').style.display = 'flex';
+    document.getElementById('specConfirmBox').style.display = 'block';
+    document.getElementById('chatInput').focus();
+  } catch (e) {
+    chatBody.innerHTML = `<div class="empty" style="color:var(--red)">${e.message}</div>`;
+  }
+}
+
+async function sendChatMessage() {
+  const input = document.getElementById('chatInput');
+  const msg = input.value.trim();
+  if (!msg || !specSessionId) return;
+  input.value = '';
+  input.disabled = true;
+
+  // Add user message immediately
+  appendChatMessage('user', msg);
+  const chatBody = document.getElementById('chatBody');
+  const loadingEl = document.createElement('div');
+  loadingEl.className = 'chat-msg assistant';
+  loadingEl.innerHTML = '<div class="chat-msg-label">Spec Writer</div><div class="chat-msg-bubble loading">Thinking</div>';
+  chatBody.appendChild(loadingEl);
+  chatBody.scrollTop = chatBody.scrollHeight;
+
+  try {
+    const res = await fetch(`${API}/api/spec/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: specSessionId, message: msg })
+    });
+    const data = await res.json();
+    chatBody.removeChild(loadingEl);
+    appendChatMessage('assistant', data.reply);
+  } catch (e) {
+    chatBody.removeChild(loadingEl);
+    appendChatMessage('assistant', 'Error: ' + e.message);
+  }
+
+  input.disabled = false;
+  input.focus();
+}
+
+function renderChatMessages(messages) {
+  const chatBody = document.getElementById('chatBody');
+  chatBody.innerHTML = '';
+  for (const m of messages) {
+    appendChatMessage(m.Role || m.role, m.Content || m.content);
+  }
+}
+
+function appendChatMessage(role, content) {
+  const chatBody = document.getElementById('chatBody');
+  const label = role === 'user' ? 'You' : 'Spec Writer';
+  const el = document.createElement('div');
+  el.className = `chat-msg ${role}`;
+  el.innerHTML = `<div class="chat-msg-label">${label}</div><div class="chat-msg-bubble">${esc(content)}</div>`;
+  chatBody.appendChild(el);
+  chatBody.scrollTop = chatBody.scrollHeight;
+}
+
+async function confirmSpec() {
+  if (!specSessionId) return;
+  const repo = document.getElementById('specRepo').value.trim();
+  if (!confirm(`Confirm specs and start pipeline for ${repo}?`)) return;
+
+  try {
+    const res = await fetch(`${API}/api/spec/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: specSessionId, repo, baseBranch: 'main' })
+    });
+    const data = await res.json();
+    specSessionId = null;
+    alert(`Pipeline started! Workflow ID: ${data.workflowId}`);
+    switchPage('pipelines');
+    fetchWorkflows();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+// ---- Specs viewer ----
+
+async function renderSpecs(wfId, el) {
+  const result = await fetchResult(wfId);
+  if (!result || !result.specs) { el.innerHTML = '<div class="empty">No specs yet</div>'; return; }
+
+  el.innerHTML = `<div class="report-card">
+    <div class="report-header">
+      <span class="report-title">Product Specifications</span>
+    </div>
+    <div class="spec-content">${formatMarkdown(result.specs)}</div>
+  </div>`;
+}
+
+// ---- Architecture review ----
+
+async function renderArchitecture(wfId, el) {
+  const result = await fetchResult(wfId);
+  if (!result) { el.innerHTML = '<div class="empty">No plan yet (pipeline still running?)</div>'; return; }
+
+  const tasks = result.tasks || [];
+  const waves = result.waves || [];
+  const ds = result.designSystem;
+
+  let html = '';
+
+  // Design System summary (if available)
+  if (ds) {
+    html += `<div class="arch-section">
+      <div class="arch-title">Design System</div>
+      <div class="report-card">
+        ${ds.colorPalette?.length ? `
+          <div class="report-section">
+            <div class="report-section-title">Color Palette (${ds.colorPalette.length} tokens)</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              ${ds.colorPalette.map(c => `<div style="display:flex;align-items:center;gap:4px;font-size:11px">
+                <span style="width:16px;height:16px;border-radius:3px;background:${esc(c.light)};border:1px solid var(--border)"></span>
+                ${esc(c.name)}
+              </div>`).join('')}
+            </div>
+          </div>
+        ` : ''}
+        ${ds.components?.length ? `
+          <div class="report-section">
+            <div class="report-section-title">Components (${ds.components.length})</div>
+            ${ds.components.map(c => `<span class="task-agent ui-designer" style="margin:2px">${esc(c.name)}</span>`).join('')}
+          </div>
+        ` : ''}
+      </div>
+    </div>`;
+  }
+
+  // Wave-based task breakdown
+  if (waves.length) {
+    html += `<div class="arch-section"><div class="arch-title">Task Breakdown (${tasks.length} tasks, ${waves.length} waves)</div>`;
+    for (const wave of waves) {
+      const waveTasks = (wave.tasks || []).map(id => tasks.find(t => t.id === id)).filter(Boolean);
+      html += `<div class="wave-header">Wave <span>${wave.wave}</span> — ${waveTasks.length} tasks (parallel)</div>
+        <div class="task-grid">
+          ${waveTasks.map(t => `<div class="task-card">
+            <div class="task-card-header">
+              <span class="task-card-id">${esc(t.id)}</span>
+              <span class="task-agent ${t.agentType || ''}">${esc(t.agentType || 'unknown')}</span>
+            </div>
+            <div class="task-card-title">${esc(t.title || t.description || '')}</div>
+            <div class="task-card-meta">
+              ${t.dependencies?.length ? `<span class="task-dep">depends: ${t.dependencies.join(', ')}</span>` : '<span class="task-dep">no dependencies</span>'}
+            </div>
+          </div>`).join('')}
+        </div>`;
+    }
+    html += '</div>';
+  } else if (result.plan) {
+    // Fallback: show raw plan text
+    html += `<div class="arch-section">
+      <div class="arch-title">Technical Plan</div>
+      <div class="spec-content">${formatMarkdown(result.plan)}</div>
+    </div>`;
+  } else {
+    html += '<div class="empty">No architecture plan yet</div>';
+  }
+
+  el.innerHTML = html;
+}
+
+// Simple markdown-ish formatter
+function formatMarkdown(text) {
+  return esc(text)
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`(.+?)`/g, '<code style="background:var(--bg);padding:1px 4px;border-radius:3px">$1</code>')
+    .replace(/^- (.+)$/gm, '<div style="padding-left:12px">- $1</div>')
+    .replace(/^WHEN (.+)$/gm, '<div style="color:var(--cyan);font-weight:600">WHEN $1</div>')
+    .replace(/^THEN (.+)$/gm, '<div style="color:var(--green);padding-left:16px">THEN $1</div>')
+    .replace(/^AND (.+)$/gm, '<div style="color:var(--green);padding-left:16px">AND $1</div>');
 }
 
 // ---- Init ----
